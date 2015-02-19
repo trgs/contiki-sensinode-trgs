@@ -39,7 +39,7 @@
 #define DEBUG DEBUG_PRINT
 #include "net/uip-debug.h"
 
-#define SEND_INTERVAL		CLOCK_SECOND / 8
+#define SEND_INTERVAL		CLOCK_SECOND * 5
 #define UIP_IP_BUF   ((struct uip_ip_hdr *)&uip_buf[UIP_LLH_LEN])
 #define UIP_UDP_BUF  ((struct uip_udp_hdr *)&uip_buf[uip_l2_l3_hdr_len])
 
@@ -108,6 +108,13 @@ static void udp_server_handler(void)
 		memset(buf, 0, MAX_PAYLOAD_LEN);
 		memcpy(buf, uip_appdata, len);
 
+		P0DIR |= 0x02; // 0 = input 1 = output
+		P0SEL &= 0xFD; // 0 = General-purpose I/O 1 = Peripheral function
+		
+		if (strstr(buf, "off"))
+			P0_1 = 0;
+		else P0_1 = 1;
+		
 		// PARSE server commands... (buf)
 		
 		/* Send result to host*/
