@@ -34,6 +34,8 @@
 #define DEBUG DEBUG_PRINT // Required for printing to to serial port using PRINTF
 #define DEBUG_PACKETS
 
+//#define CC2530_RF_CONF_CHANNEL 21 // Required for Cooja simulation...
+
 #include "dev/watchdog.h"
 #include "dev/leds.h"
 #include "net/rpl/rpl.h"
@@ -44,8 +46,7 @@
 #define UIP_IP_BUF   ((struct uip_ip_hdr *)&uip_buf[UIP_LLH_LEN])
 #define UIP_UDP_BUF  ((struct uip_udp_hdr *)&uip_buf[uip_l2_l3_hdr_len])
 
-#define MAX_PAYLOAD_LEN 120
-
+#define MAX_PAYLOAD_LEN 32
 #define MAX_NODES 32
 
 #define BOOL char
@@ -60,8 +61,13 @@ static struct nodeInfo {
 };
 
 static struct uip_udp_conn *server_conn;
+
 static char buf[MAX_PAYLOAD_LEN];
 static uint16_t len;
+
+#define LOCAL_CONN_PORT 3001
+static struct uip_udp_conn *l_conn;
+
 static uip_ipaddr_t ipaddr;
 
 /* Vars for node list management */
@@ -119,32 +125,37 @@ static BOOL node_update(uint8_t *address)
 	return TRUE;
 }
 /*---------------------------------------------------------------------------*/
-static void tcpip_handler(void)
+static void udp_server_handler(void)
 {
 	int i;
-	memset(buf, 0, MAX_PAYLOAD_LEN);
 	
 	if(uip_newdata()) {
 		leds_on(LEDS_GREEN);
-		len = uip_datalen();
+		
+		len = strlen((char*)uip_appdata); // uip_datalen(); is normally used, but we only send strings anyway..
+		if (len >= MAX_PAYLOAD_LEN) // Buffer checking...
+			len = MAX_PAYLOAD_LEN - 1; // -1 because we always want to end with a \0
+
+		memset(buf, 0, MAX_PAYLOAD_LEN);
 		memcpy(buf, uip_appdata, len);
 
 #ifdef DEBUG_PACKETS
 		PRINTF("%u bytes from [", len);
 		PRINTADDRESS(&UIP_IP_BUF->srcipaddr);
-		PRINTF("]:%u HEX =>", UIP_HTONS(UIP_UDP_BUF->srcport));
+		PRINTF("]:%u");
 
+		// String dump data
+		PRINTF(" STRING => %s", (char *)buf);
+		
 		// Hex dump of data
+		PRINTF(" HEX =>", UIP_HTONS(UIP_UDP_BUF->srcport));
 		for (i=0; i<len; i++)
 		{
 			PRINTF(" 0x%x", buf[i]);
 		}
+
 		PRINTF("\n");
 #endif
-
-		uip_ipaddr_copy(&server_conn->ripaddr, &UIP_IP_BUF->srcipaddr);
-		server_conn->rport = UIP_UDP_BUF->srcport;
-
 		node_update(UIP_IP_BUF->srcipaddr.u8);
 
 #ifdef DEBUG_PACKETS
@@ -152,15 +163,19 @@ static void tcpip_handler(void)
 		PRINTADDRESS(&UIP_IP_BUF->srcipaddr);
 		PRINTF("]:%u\n", UIP_HTONS(UIP_UDP_BUF->srcport));
 #endif
-		
+
+		/* Send response to client */
+		uip_ipaddr_copy(&server_conn->ripaddr, &UIP_IP_BUF->srcipaddr);
+		server_conn->rport = UIP_UDP_BUF->srcport;
 		uip_udp_packet_send(server_conn, buf, len);
 		
 		/* Restore server connection to allow data from any node */
 		uip_create_unspecified(&server_conn->ripaddr);
 		server_conn->rport = 0;
+		
+		leds_off(LEDS_GREEN);
 	}
 	
-	leds_off(LEDS_GREEN);
 	return;
 }
 /*---------------------------------------------------------------------------*/
@@ -169,7 +184,8 @@ static void print_nodelist()
   // TODO
   PRINTF("> NODES: ");
   PRINTADDRESS(nodes[0].address);
-  PRINTF(" (last update %lu seconds ago)\n", clock_seconds() - nodes[0].last_seen);
+  PRINTF("\n");
+  //PRINTF(" (last update %lu seconds ago)\n", clock_seconds() - nodes[0].last_seen); // FIXME TIMESHIT IS BUGGED, crashed
 }
 /*---------------------------------------------------------------------------*/
 static void print_stats()
@@ -231,7 +247,7 @@ PROCESS_THREAD(udp_server_process, ev, data)
 	while(1) {
 		PROCESS_YIELD();
 		if(ev == tcpip_event) {
-			tcpip_handler();
+			udp_server_handler();
 		}
 	}
 
@@ -240,6 +256,10 @@ PROCESS_THREAD(udp_server_process, ev, data)
 /*----------------------------------------------------------------------------*/
 PROCESS_THREAD(cc2531_usb_process, ev, data)
 {
+	uip_ipaddr_t node_ipaddr;
+	char *pch;
+	int argc;
+
 	PROCESS_BEGIN();
 
 	data = 0;
@@ -248,17 +268,13 @@ PROCESS_THREAD(cc2531_usb_process, ev, data)
 		PROCESS_WAIT_EVENT();
 
 		if(ev == serial_line_event_message) {
-			/*
-			PRINTF("Received host command: ");
-			PRINTF((char *)data);
-			PRINTF("\n");
-			*/
-			
-			if (strstr(data,"help")) {
+
+		if (strstr(data,"help")) {
 				PRINTF("> HELP: help - Display this message\n");
 				PRINTF("> HELP: info - Print host info\n");
 				PRINTF("> HELP: nodes - Print list of active nodes\n");
 				PRINTF("> HELP: stats - Print RIME stats\n");
+				PRINTF("> HELP: cmd <node_ip> <command> - Sends command to node\n");
 			} else if (strstr(data,"stats")) {
 				print_stats();
 			} else if (strstr(data,"nodes")) {
@@ -267,6 +283,44 @@ PROCESS_THREAD(cc2531_usb_process, ev, data)
 				print_local_addresses();
 				PRINTF("> INFO: UDP Server listening port: 3000, TTL=%u\n", server_conn->ttl);
 				PRINTF("> INFO: RF Channel=%u PanID=0x%x\n", CC2530_RF_CONF_CHANNEL, IEEE802154_CONF_PANID);
+			} else if (strstr(data,"cmd")) {
+				/* split args */
+			
+				argc = 0;
+				pch = strtok ((char *)data," ");
+				memset(buf, 0, MAX_PAYLOAD_LEN);
+				
+				while (pch != NULL)
+				{
+					switch (argc)
+					{
+						case 0: // "cmd"
+						break;
+						case 1: // ipv6 address of target client node
+							// fe80:0000:0000:0000:0212:4b00:014d:c34e
+							uiplib_ipaddrconv(pch, &node_ipaddr);
+
+							l_conn = udp_new(&node_ipaddr, UIP_HTONS(3000), NULL);
+							udp_bind(l_conn, UIP_HTONS(LOCAL_CONN_PORT));
+						break;
+						default: // command to send to client node
+							strcat((char *)buf, pch);
+							strcat((char *)buf, " ");
+						break;
+					}
+
+					pch = strtok(NULL, " ");
+					argc++;
+				}
+
+				// and finally send command to client node
+				buf[strlen((char *)buf)-1] = 0; // strip last " "
+				uip_udp_packet_send(l_conn, buf, strlen((char*)buf));
+
+				// and cleanup old connection data to prevent memleaks
+				if(l_conn != NULL) {
+					uip_udp_remove(l_conn);
+				}
 			} else {
 				PRINTF("> ERROR: Unknown command, will implement soon ;)\n");
 			}

@@ -40,7 +40,11 @@
 #include "net/uip-debug.h"
 
 #define SEND_INTERVAL		2 * CLOCK_SECOND
-#define MAX_PAYLOAD_LEN		40
+#define UIP_IP_BUF   ((struct uip_ip_hdr *)&uip_buf[UIP_LLH_LEN])
+#define UIP_UDP_BUF  ((struct uip_udp_hdr *)&uip_buf[uip_l2_l3_hdr_len])
+
+#define MAX_PAYLOAD_LEN 32
+const char * HOST_FIXED_IP = "fe80:0000:0000:0000:0212:4b00:014d:c34e";
 
 static char buf[MAX_PAYLOAD_LEN];
 static char button0_state = 0;
@@ -48,15 +52,19 @@ static char button0_state = 0;
 #define LOCAL_CONN_PORT 3001
 static struct uip_udp_conn *l_conn;
 
+static struct uip_udp_conn *server_conn;
+static uint16_t len;
+
 /*---------------------------------------------------------------------------*/
+PROCESS(udp_server_process, "UDP server process");
 PROCESS(udp_client_process, "UDP client process");
-AUTOSTART_PROCESSES(&udp_client_process);
+AUTOSTART_PROCESSES(&udp_server_process, &udp_client_process);
 /*---------------------------------------------------------------------------*/
-static void response_handler(void)
+static void udp_client_handler(void)
 {
 	if(uip_newdata()) {
 		leds_on(LEDS_GREEN);
-		clock_delay_usec(150 * 1000);
+		clock_delay_usec(200000);
 		
 		/*
 		putstring("0x");
@@ -66,40 +74,88 @@ static void response_handler(void)
 		puthex((*(uint16_t *) uip_appdata) & 0xFF);
 		putchar('\n');
 		*/
+		
+		leds_off(LEDS_GREEN);
 	}
 
-	leds_off(LEDS_GREEN);
 	return;
 }
 /*---------------------------------------------------------------------------*/
 static void send_state_update(void)
 {
-	static int seq_id;
 	struct uip_udp_conn /**this_conn*/;
 
 	leds_on(LEDS_YELLOW);
 	memset(buf, 0, MAX_PAYLOAD_LEN);
-	memcpy(buf, &seq_id, sizeof(seq_id));
-	seq_id++;
+	strcat((char *)buf, "I'm ok!");
 
-	uip_udp_packet_send(l_conn, buf, sizeof(seq_id));
+	uip_udp_packet_send(l_conn, buf, strlen((char *)buf));
 	leds_off(LEDS_YELLOW);
+}
+/*---------------------------------------------------------------------------*/
+static void udp_server_handler(void)
+{
+	int i;
+	
+	if(uip_newdata()) {
+		leds_on(LEDS_RED);
+
+		len = strlen((char*)uip_appdata); // uip_datalen(); is normally used, but we only send strings anyway..
+		if (len >= MAX_PAYLOAD_LEN) // Buffer checking...
+			len = MAX_PAYLOAD_LEN - 1; // -1 because we always want to end with a \0
+
+		memset(buf, 0, MAX_PAYLOAD_LEN);
+		memcpy(buf, uip_appdata, len);
+
+		// PARSE server commands... (buf)
+		
+		/* Send result to host*/
+		uip_udp_packet_send(l_conn, buf, len);
+		
+		/* Restore server connection to allow data from any node */
+		uip_create_unspecified(&server_conn->ripaddr);
+		server_conn->rport = 0;
+
+		clock_delay_usec(200000);	
+		leds_off(LEDS_RED);
+	}
+	
+	return;
+}
+/*---------------------------------------------------------------------------*/
+PROCESS_THREAD(udp_server_process, ev, data)
+{
+	PROCESS_BEGIN();
+	//PRINTF("Starting UDP server\n");
+
+	//create_rplroot();
+
+	server_conn = udp_new(NULL, UIP_HTONS(0), NULL);
+	udp_bind(server_conn, UIP_HTONS(3000));
+
+	//PRINTF("Listen port: 3000, TTL=%u\n", server_conn->ttl);
+
+	while(1) {
+		PROCESS_YIELD();
+		if(ev == tcpip_event) {
+			udp_server_handler();
+		}
+	}
+
+	PROCESS_END();
 }
 /*---------------------------------------------------------------------------*/
 PROCESS_THREAD(udp_client_process, ev, data)
 {
 	static struct etimer timerStateUpdate;
-	uip_ipaddr_t ipaddr;
+	uip_ipaddr_t ipaddr_server;
 
 	PROCESS_BEGIN();
 
-	uip_ip6addr(&ipaddr, 0xfe80, 0, 0, 0, 0x0212, 0x4b00, 0x014d, 0xc34e);
+	uiplib_ipaddrconv(HOST_FIXED_IP, &ipaddr_server);
+	//uip_ip6addr(&ipaddr_server, 0xfe80, 0, 0, 0, 0x0212, 0x4b00, 0x014d, 0xc34e);
 	/* new connection with remote host */
-	l_conn = udp_new(&ipaddr, UIP_HTONS(3000), NULL);
-	if(!l_conn) {
-		leds_on(LEDS_RED);
-	} else leds_off(LEDS_RED);
-
+	l_conn = udp_new(&ipaddr_server, UIP_HTONS(3000), NULL);
 	udp_bind(l_conn, UIP_HTONS(LOCAL_CONN_PORT));
 
 	etimer_set(&timerStateUpdate, SEND_INTERVAL);
@@ -110,7 +166,7 @@ PROCESS_THREAD(udp_client_process, ev, data)
 			send_state_update();
 			etimer_restart(&timerStateUpdate);
 		} else if(ev == tcpip_event) {
-			response_handler();
+			udp_client_handler();
 		}
 	}
 
