@@ -33,6 +33,7 @@
 #include <string.h>
 #define DEBUG DEBUG_PRINT // Required for printing to to serial port using PRINTF
 #define DEBUG_PACKETS
+//#define DEBUG_ACK
 
 //#define CC2530_RF_CONF_CHANNEL 21 // Required for Cooja simulation...
 
@@ -165,6 +166,7 @@ static void udp_server_handler(void)
 #endif
 		node_update(UIP_IP_BUF->srcipaddr.u8);
 
+#ifdef DEBUG_ACK
 #ifdef DEBUG_PACKETS
 		PRINTF("Sending ACK to: ");
 		PRINTADDRESS(&UIP_IP_BUF->srcipaddr);
@@ -175,6 +177,7 @@ static void udp_server_handler(void)
 		uip_ipaddr_copy(&server_conn->ripaddr, &UIP_IP_BUF->srcipaddr);
 		server_conn->rport = UIP_UDP_BUF->srcport;
 		uip_udp_packet_send(server_conn, buf, len);
+#endif
 		
 		/* Restore server connection to allow data from any node */
 		uip_create_unspecified(&server_conn->ripaddr);
@@ -276,21 +279,7 @@ PROCESS_THREAD(cc2531_usb_process, ev, data)
 
 		if(ev == serial_line_event_message) {
 
-		if (strstr(data,"help")) {
-				PRINTF("> HELP: help - Display this message\n");
-				PRINTF("> HELP: info - Print host info\n");
-				PRINTF("> HELP: nodes - Print list of active nodes\n");
-				PRINTF("> HELP: stats - Print RIME stats\n");
-				PRINTF("> HELP: cmd <node_ip> <command> - Sends command to node\n");
-			} else if (strstr(data,"stats")) {
-				print_stats();
-			} else if (strstr(data,"nodes")) {
-				print_nodelist();
-			} else if (strstr(data,"info")) {
-				print_local_addresses();
-				PRINTF("> INFO: UDP Server listening port: 3000, TTL=%u\n", server_conn->ttl);
-				PRINTF("> INFO: RF Channel=%u PanID=0x%x\n", CC2530_RF_CONF_CHANNEL, IEEE802154_CONF_PANID);
-			} else if (strstr(data,"cmd")) {
+		if (strstr(data,"cmd")) {
 				/* split args */
 			
 				argc = 0;
@@ -328,6 +317,20 @@ PROCESS_THREAD(cc2531_usb_process, ev, data)
 				if(l_conn != NULL) {
 					uip_udp_remove(l_conn);
 				}
+			} else if (strstr(data,"stats")) {
+				print_stats();
+			} else if (strstr(data,"nodes")) {
+				print_nodelist();
+			} else if (strstr(data,"info")) {
+				print_local_addresses();
+				PRINTF("> INFO: UDP Server listening port: 3000, TTL=%u\n", server_conn->ttl);
+				PRINTF("> INFO: RF Channel=%u PanID=0x%x\n", CC2530_RF_CONF_CHANNEL, IEEE802154_CONF_PANID);
+			} else if (strstr(data,"help")) {
+				PRINTF("> HELP: help - Display this message\n");
+				PRINTF("> HELP: info - Print host info\n");
+				PRINTF("> HELP: nodes - Print list of active nodes\n");
+				PRINTF("> HELP: stats - Print RIME stats\n");
+				PRINTF("> HELP: cmd <node_ip> <command> - Sends command to node\n");
 			} else {
 				PRINTF("> ERROR: Unknown command, will implement soon ;)\n");
 			}
