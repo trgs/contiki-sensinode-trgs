@@ -99,10 +99,16 @@ static BOOL node_add(uint8_t *address)
 /*---------------------------------------------------------------------------*/
 static int node_find(uint8_t *address)
 {
-	int i;
+	int i,x;
 	
 	for (i=0; i<node_count; i++) {
-		if (memcmp(nodes[i].address, &address, 16)) {
+		for (x=0; x<16; x++) {
+			if (nodes[i].address[x] != address[x]) {
+				break;
+			}
+		}
+		
+		if (x == 16) {
 			return i;
 		}
 	}
@@ -121,7 +127,7 @@ static BOOL node_update(uint8_t *address)
 	} else {
 		nodes[index].last_seen = clock_seconds();
 	}
-	
+
 	return TRUE;
 }
 /*---------------------------------------------------------------------------*/
@@ -135,7 +141,7 @@ static void udp_server_handler(void)
 		len = uip_datalen();
 		//len = strlen((char*)uip_appdata); // uip_datalen(); is normally used, but we only send strings anyway..
 		if (len >= MAX_PAYLOAD_LEN) // Buffer checking...
-			len = MAX_PAYLOAD_LEN - 1; // -1 because we always want to end with a \0
+			len = MAX_PAYLOAD_LEN;
 
 		memset(buf, 0, MAX_PAYLOAD_LEN);
 		memcpy(buf, uip_appdata, len);
