@@ -87,7 +87,7 @@ static void send_state_update(void)
 
 	leds_on(LEDS_YELLOW);
 	memset(buf, 0, MAX_PAYLOAD_LEN);
-	strcat((char *)buf, "I'm ok!");
+	strcat((char *)buf, "I'm ok");
 
 	uip_udp_packet_send(l_conn, buf, strlen((char *)buf));
 	leds_off(LEDS_YELLOW);
@@ -100,7 +100,8 @@ static void udp_server_handler(void)
 	if(uip_newdata()) {
 		leds_on(LEDS_RED);
 
-		len = strlen((char*)uip_appdata); // uip_datalen(); is normally used, but we only send strings anyway..
+		len = uip_datalen();
+		//len = strlen((char*)uip_appdata); // uip_datalen(); is normally used, but we only send strings anyway..
 		if (len >= MAX_PAYLOAD_LEN) // Buffer checking...
 			len = MAX_PAYLOAD_LEN - 1; // -1 because we always want to end with a \0
 

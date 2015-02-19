@@ -132,7 +132,8 @@ static void udp_server_handler(void)
 	if(uip_newdata()) {
 		leds_on(LEDS_GREEN);
 		
-		len = strlen((char*)uip_appdata); // uip_datalen(); is normally used, but we only send strings anyway..
+		len = uip_datalen();
+		//len = strlen((char*)uip_appdata); // uip_datalen(); is normally used, but we only send strings anyway..
 		if (len >= MAX_PAYLOAD_LEN) // Buffer checking...
 			len = MAX_PAYLOAD_LEN - 1; // -1 because we always want to end with a \0
 
