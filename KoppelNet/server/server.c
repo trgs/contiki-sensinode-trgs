@@ -48,8 +48,14 @@
 
 #define MAX_NODES 32
 
+#define BOOL char
+#define TRUE 1
+#define FALSE 0
+
+#define PRINTADDRESS(addr) PRINTF("%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x", ((uint8_t *)addr)[0], ((uint8_t *)addr)[1], ((uint8_t *)addr)[2], ((uint8_t *)addr)[3], ((uint8_t *)addr)[4], ((uint8_t *)addr)[5], ((uint8_t *)addr)[6], ((uint8_t *)addr)[7], ((uint8_t *)addr)[8], ((uint8_t *)addr)[9], ((uint8_t *)addr)[10], ((uint8_t *)addr)[11], ((uint8_t *)addr)[12], ((uint8_t *)addr)[13], ((uint8_t *)addr)[14], ((uint8_t *)addr)[15])
+
 static struct nodeInfo {
-        uip_ip6addr_t address;
+        uint8_t address[16];
 		unsigned long last_seen;
 };
 
@@ -60,6 +66,7 @@ static uip_ipaddr_t ipaddr;
 
 /* Vars for node list management */
 static struct nodeInfo nodes[MAX_NODES];
+static int node_count;
 
 /* Vars for serial host interface */
 extern process_event_t serial_line_event_message;
@@ -68,7 +75,49 @@ extern process_event_t serial_line_event_message;
 PROCESS(udp_server_process, "UDP server process");
 PROCESS(cc2531_usb_process, "cc2531 USB serial interface process");
 AUTOSTART_PROCESSES(&udp_server_process, &cc2531_usb_process);
-
+/*---------------------------------------------------------------------------*/
+static BOOL node_add(uint8_t *address)
+{
+	//PRINTF("NETWORK> adding new node!!\n");
+	if ((node_count+1) >= MAX_NODES) {
+		return FALSE;
+	}
+	
+	memcpy(nodes[node_count].address, address, 16); 
+	nodes[node_count].last_seen = clock_seconds();
+	
+	node_count++;
+	
+	return TRUE;
+}
+/*---------------------------------------------------------------------------*/
+static int node_find(uint8_t *address)
+{
+	int i;
+	
+	for (i=0; i<node_count; i++) {
+		if (memcmp(nodes[i].address, &address, 16)) {
+			return i;
+		}
+	}
+	
+	return -1;
+}
+/*---------------------------------------------------------------------------*/
+static BOOL node_update(uint8_t *address)
+{
+	int index = node_find(address);
+	
+	if (index == -1) {
+		if (!node_add(address)) {
+			return FALSE;
+		}
+	} else {
+		nodes[index].last_seen = clock_seconds();
+	}
+	
+	return TRUE;
+}
 /*---------------------------------------------------------------------------*/
 static void tcpip_handler(void)
 {
@@ -82,7 +131,7 @@ static void tcpip_handler(void)
 
 #ifdef DEBUG_PACKETS
 		PRINTF("%u bytes from [", len);
-		PRINT6ADDR(&UIP_IP_BUF->srcipaddr);
+		PRINTADDRESS(&UIP_IP_BUF->srcipaddr);
 		PRINTF("]:%u HEX =>", UIP_HTONS(UIP_UDP_BUF->srcport));
 
 		// Hex dump of data
@@ -96,12 +145,11 @@ static void tcpip_handler(void)
 		uip_ipaddr_copy(&server_conn->ripaddr, &UIP_IP_BUF->srcipaddr);
 		server_conn->rport = UIP_UDP_BUF->srcport;
 
-		memcpy(&nodes[0].address, &UIP_IP_BUF->srcipaddr, sizeof(uip_ip6addr_t)); 
-		nodes[0].last_seen = clock_seconds();
+		node_update(UIP_IP_BUF->srcipaddr.u8);
 
 #ifdef DEBUG_PACKETS
 		PRINTF("Sending ACK to: ");
-		PRINT6ADDR(&UIP_IP_BUF->srcipaddr);
+		PRINTADDRESS(&UIP_IP_BUF->srcipaddr);
 		PRINTF("]:%u\n", UIP_HTONS(UIP_UDP_BUF->srcport));
 #endif
 		
@@ -120,7 +168,7 @@ static void print_nodelist()
 {
   // TODO
   PRINTF("> NODES: ");
-  PRINT6ADDR(&nodes[0].address);
+  PRINTADDRESS(nodes[0].address);
   PRINTF(" (last update %lu seconds ago)\n", clock_seconds() - nodes[0].last_seen);
 }
 /*---------------------------------------------------------------------------*/
@@ -140,7 +188,7 @@ static void print_local_addresses(void)
 		state = uip_ds6_if.addr_list[i].state;
 		if(uip_ds6_if.addr_list[i].isused && (state == ADDR_TENTATIVE || state == ADDR_PREFERRED)) {
 			PRINTF("> INFO:   ");
-			PRINT6ADDR(&uip_ds6_if.addr_list[i].ipaddr);
+			PRINTADDRESS(&uip_ds6_if.addr_list[i].ipaddr);
 			PRINTF("\n");
 			if(state == ADDR_TENTATIVE) {
 				uip_ds6_if.addr_list[i].state = ADDR_PREFERRED;
@@ -163,7 +211,7 @@ void create_rplroot()
 		rpl_set_prefix(dag, &ipaddr, 64);
 
 		PRINTF("Created a new RPL dag with ID: ");
-		PRINT6ADDR(&dag->dag_id);
+		PRINTADDRESS(&dag->dag_id);
 		PRINTF("\n");
 	}
 }
