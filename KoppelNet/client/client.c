@@ -30,6 +30,7 @@
 #include "contiki.h"
 #include "contiki-lib.h"
 #include "contiki-net.h"
+#include "clock.h"
 
 #include <string.h>
 #include "dev/leds.h"
